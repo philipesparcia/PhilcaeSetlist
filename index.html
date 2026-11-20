@@ -73,13 +73,13 @@
   #play{min-width:112px;font-weight:700}
   #play.on{background:var(--accent2);border-color:var(--accent2);color:var(--onaccent2)}
 
-  #stage{flex:1;overflow:auto;position:relative;scroll-behavior:auto}
-  #sheet{max-width:980px;margin:0 auto;padding:28px 28px 70vh;font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;font-size:var(--size);line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+  #stage{flex:1;overflow:auto;position:relative;scroll-behavior:auto;touch-action:pan-x pan-y}
+  #sheet{max-width:none;margin:0 auto;padding:28px 28px 70vh;font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;font-size:var(--size);line-height:1.55;white-space:pre;overflow-wrap:normal;width:max-content;min-width:0}
   #sheet .c{color:var(--accent);font-weight:700}
   #sheet .s{color:var(--accent2);font-weight:700;margin-top:.7em;display:block}
   #sheet .l{color:var(--lyric)}
   #sheet .ln{display:block;min-height:1.55em}
-  #sheet .sep{display:flex;align-items:center;gap:14px;margin:2.2em 0 1em;font-family:'DM Sans',system-ui,sans-serif;white-space:normal}
+  #sheet .sep{width:var(--sepw,100%);display:flex;align-items:center;gap:14px;margin:2.2em 0 1em;font-family:'DM Sans',system-ui,sans-serif;white-space:normal}
   #sheet .sep:first-child{margin-top:0}
   #sheet .sep::before,#sheet .sep::after{content:'';height:2px;background:var(--line);flex:1}
   #sheet .sep .pill{background:var(--accent);color:var(--onaccent);font-weight:700;border-radius:999px;padding:6px 16px;font-size:.62em;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
@@ -179,6 +179,9 @@
   .findrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .findrow input{flex:1 1 180px;min-width:0}
   body.setview #findG{display:none}
+
+  #fVal{min-width:34px}
+  #fitBtn.on{background:var(--accent);border-color:var(--accent);color:var(--onaccent)}
 </style>
 </head>
 <body>
@@ -212,7 +215,7 @@
     <input id="title" placeholder="Song title" aria-label="Song title">
     <div id="crumb"></div>
     <div class="grp tr" title="Transpose"><button class="small" id="tDown">−</button><b id="tVal">0</b><button class="small" id="tUp">+</button><span>key</span></div>
-    <div class="grp" title="Text size"><button class="small" id="fDown">A−</button><button class="small" id="fUp">A+</button></div>
+    <div class="grp" title="Zoom (you can also pinch with two fingers)"><button class="small" id="fDown">A−</button><b id="fVal">22</b><button class="small" id="fUp">A+</button><button class="small" id="fitBtn" title="Fit the longest line to the screen">Fit</button></div>
     <div class="grp" title="Autoscroll speed"><span>Slow</span><button class="small" id="spDown">−</button><b id="spVal">8</b><button class="small" id="spUp">+</button><span>Fast</span></div>
     <button id="findG" title="Search for this song's chords online">🔍 Find chords</button>
     <button id="viewBtn" title="Show every song in this set, in order">☷ Whole set</button>
@@ -489,6 +492,7 @@
         sheet.append(d);
       });
     });
+    fitIfAuto();
   }
   function updateFind(){
     const t=$('findQ').value.trim();
@@ -499,7 +503,7 @@
     const c=cur();
     $('title').value=c?c.song.title:''; $('title').disabled=!c;
     const t=c?c.song.transpose||0:0; $('tVal').textContent=(t>0?'+':'')+t;
-    document.documentElement.style.setProperty('--size',S.size+'px');
+    document.documentElement.style.setProperty('--size',S.size+'px'); $('fVal').textContent=Math.round(S.size); $('fitBtn').classList.toggle('on',S.autoFit!==false);
     document.body.classList.toggle('setview',S.view==='set');
     $('viewBtn').textContent=S.view==='set'?'☷ One song':'☷ Whole set';
     $('crumb').textContent=c?curGig().name+' · '+c.set.name+' · '+c.set.songs.length+' songs':'';
@@ -563,8 +567,47 @@
   function setSpeed(v){ S.speed=Math.max(1,Math.min(30,v)); $('spVal').textContent=S.speed; save(); }
   $('spUp').onclick=()=>setSpeed(S.speed+1); $('spDown').onclick=()=>setSpeed(S.speed-1);
   $('themeBtn').onclick=()=>{ S.theme=S.theme==='light'?'dark':'light'; save(); renderBar(); };
-  $('fUp').onclick=()=>{S.size=Math.min(56,S.size+2); renderBar(); save();};
-  $('fDown').onclick=()=>{S.size=Math.max(12,S.size-2); renderBar(); save();};
+  /* ---------- zoom: buttons, Fit, pinch ---------- */
+  const MINZ=8, MAXZ=64;
+  function applySize(v,keepPos){
+    v=Math.max(MINZ,Math.min(MAXZ,Math.round(v*10)/10));
+    const old=S.size; S.size=v;
+    document.documentElement.style.setProperty('--size',v+'px');
+    $('fVal').textContent=Math.round(v);
+    setSepW();
+    if(keepPos&&old){ const r=v/old; stage.scrollTop*=r; stage.scrollLeft*=r; pos=stage.scrollTop; lastSet=pos; }
+  }
+  function setSepW(){
+    if(!stage.clientWidth) return;
+    const pad=parseFloat(getComputedStyle($('sheet')).paddingLeft)||0;
+    $('sheet').style.setProperty('--sepw',Math.max(200,stage.clientWidth-2*pad)+'px');
+  }
+  function fitSize(){
+    if(!stage.clientWidth) return;
+    let L=10; document.querySelectorAll('#sheet .ln').forEach(el=>{ if(el.textContent.length>L) L=el.textContent.length; });
+    const pad=parseFloat(getComputedStyle($('sheet')).paddingLeft)||0;
+    const avail=stage.clientWidth-2*pad;
+    applySize(Math.min(28,Math.max(11,avail/(L*0.605))),true);
+  }
+  function fitIfAuto(){ if(S.autoFit!==false) fitSize(); else setSepW(); }
+  function manual(v){ S.autoFit=false; applySize(v,true); $('fitBtn').classList.remove('on'); save(); }
+  $('fUp').onclick=()=>manual(S.size+2);
+  $('fDown').onclick=()=>manual(S.size-2);
+  $('fitBtn').onclick=()=>{ S.autoFit=true; $('fitBtn').classList.add('on'); fitSize(); save(); };
+  window.addEventListener('resize',()=>{ if(!editing) fitIfAuto(); });
+  // pinch with two fingers on the chord sheet
+  let pinch=null;
+  const dist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+  stage.addEventListener('touchstart',e=>{ if(e.touches.length===2){ pinch={d:dist(e.touches),size:S.size}; } },{passive:true});
+  stage.addEventListener('touchmove',e=>{
+    if(e.touches.length===2&&pinch){
+      e.preventDefault();
+      S.autoFit=false; $('fitBtn').classList.remove('on');
+      applySize(pinch.size*dist(e.touches)/pinch.d,true);
+    }
+  },{passive:false});
+  stage.addEventListener('touchend',e=>{ if(pinch&&e.touches.length<2){ pinch=null; save(); } },{passive:true});
+  stage.addEventListener('wheel',e=>{ if(e.ctrlKey){ e.preventDefault(); manual(S.size*(e.deltaY<0?1.08:0.92)); } },{passive:false});
   $('tUp').onclick=()=>shiftT(1); $('tDown').onclick=()=>shiftT(-1);
   function shiftT(d){const c=cur(); if(!c) return; c.song.transpose=Math.max(-11,Math.min(11,(c.song.transpose||0)+d)); save(); renderBar(); renderSheet();}
   function setTitle(v){
