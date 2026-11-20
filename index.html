@@ -261,6 +261,8 @@
 <div id="modal"><div class="box">
   <b id="mTitle"></b><div class="hint" id="mHint"></div>
   <textarea id="mText" spellcheck="false"></textarea>
+  <div id="mExtra" class="row" style="justify-content:flex-start;flex-wrap:wrap"></div>
+  <input type="file" id="restoreFile" style="display:none">
   <div class="row"><button id="mClose">Close</button><button class="primary" id="mAction"></button></div>
 </div></div>
 
@@ -802,24 +804,53 @@
     else if(e.key==='ArrowDown'&&e.shiftKey){ S.speed=Math.max(1,S.speed-1); renderBar(); save(); }
   });
 
-  /* backup / restore (copy & paste, since downloads are blocked here) */
-  function modal(title,hint,text,action,fn){
-    $('mTitle').textContent=title; $('mHint').textContent=hint; $('mText').value=text; $('mText').readOnly=!fn;
-    $('mAction').textContent=action; $('mAction').onclick=fn||(()=>{});
+  /* backup / restore: save a file, share a file, or copy text */
+  function stamp(){ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+  function modal(o){
+    $('mTitle').textContent=o.title; $('mHint').textContent=o.hint;
+    $('mText').value=o.text||''; $('mText').readOnly=!!o.readOnly; $('mText').style.display=o.showText?'':'none';
+    const ex=$('mExtra'); ex.innerHTML='';
+    (o.extra||[]).forEach(([label,fn])=>{ const b=document.createElement('button'); b.textContent=label; b.onclick=()=>fn(b); ex.append(b); });
+    $('mAction').style.display=o.action?'':'none'; $('mAction').textContent=o.action||''; $('mAction').onclick=o.fn||null;
     $('modal').style.display='flex';
   }
   $('mClose').onclick=()=>{$('modal').style.display='none';};
-  $('backup').onclick=()=>modal('Backup','Copy this text and keep it somewhere safe (notes app, email to yourself).',JSON.stringify(S),'Copy',()=>{
-    const ta=$('mText'); ta.select();
-    try{ navigator.clipboard.writeText(ta.value).then(()=>{$('mAction').textContent='Copied ✓';},()=>{document.execCommand('copy'); $('mAction').textContent='Copied ✓';}); }
-    catch(e){ try{document.execCommand('copy'); $('mAction').textContent='Copied ✓';}catch(_){} }
-  });
-  $('mAction').onclick=null;
-  $('restore').onclick=()=>modal('Restore','Paste a backup here. This replaces everything currently saved.','','Restore',()=>{
+  function backupFile(type,ext){ return new File([JSON.stringify(S)],'PhiCae-Setlist-backup-'+stamp()+ext,{type}); }
+  $('backup').onclick=()=>{
+    const extra=[['💾 Save file',b=>{
+      try{
+        const f=backupFile('application/json','.json'), url=URL.createObjectURL(f), a=document.createElement('a');
+        a.href=url; a.download=f.name; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),4000);
+        $('mHint').textContent='Saved '+f.name+' to your Downloads. Keep it somewhere safe (Google Drive, email to yourself).';
+      }catch(e){ $('mHint').textContent='Saving a file is not allowed here. Use the downloaded HTML file, or Copy text.'; }
+    }]];
+    if(navigator.share&&navigator.canShare){
+      extra.push(['📤 Share file',async b=>{
+        let f=backupFile('application/json','.json');
+        if(!navigator.canShare({files:[f]})) f=backupFile('text/plain','.txt');
+        if(!navigator.canShare({files:[f]})){ $('mHint').textContent='Sharing files is not available here. Use Save file instead.'; return; }
+        try{ await navigator.share({files:[f],title:"Phi'Cae Setlist backup"}); }catch(e){ /* cancelled */ }
+      }]);
+    }
+    modal({title:'Backup',hint:'Save or share a backup file. A file is much safer than pasting a long text into a chat.',text:JSON.stringify(S),showText:false,readOnly:true,extra,action:'Copy text',fn:()=>{
+      const ta=$('mText'); ta.style.display=''; ta.select();
+      try{ navigator.clipboard.writeText(ta.value).then(()=>{$('mAction').textContent='Copied ✓';},()=>{document.execCommand('copy'); $('mAction').textContent='Copied ✓';}); }
+      catch(e){ try{document.execCommand('copy'); $('mAction').textContent='Copied ✓';}catch(_){} }
+    }});
+  };
+  function doRestore(){
     try{ const o=JSON.parse($('mText').value); const m=migrate(o); if(!m) throw 0; S=m; ensureCur(); setEdit(false); commit(); $('modal').style.display='none'; }
     catch(e){ $('mHint').textContent='That does not look like a valid backup.'; }
-  });
-  $('restore').addEventListener('click',()=>{ $('mText').readOnly=false; });
+  }
+  $('restore').onclick=()=>modal({title:'Restore',hint:'Choose your backup file, or paste the backup text. Restoring replaces everything currently saved.',text:'',showText:true,
+    extra:[['📂 Choose backup file',()=>$('restoreFile').click()]],action:'Restore',fn:doRestore});
+  $('restoreFile').onchange=e=>{
+    const f=e.target.files[0]; e.target.value=''; if(!f) return;
+    const r=new FileReader();
+    r.onload=()=>{ $('mText').value=String(r.result||''); $('mText').style.display=''; $('mHint').textContent='File loaded: '+f.name+'. Tap Restore to replace your current songs with it.'; };
+    r.onerror=()=>{ $('mHint').textContent='Could not read that file.'; };
+    r.readAsText(f);
+  };
 
   /* ---------- remember exactly where you were (survives closing the app) ---------- */
   function scrollKey(){ const c=cur(); return curGig().id+'|'+(S.view==='set'?(c?c.set.id:''):S.cur); }
