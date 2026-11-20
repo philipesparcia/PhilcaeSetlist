@@ -182,6 +182,9 @@
 
   #fVal{min-width:34px}
   #fitBtn.on{background:var(--accent);border-color:var(--accent);color:var(--onaccent)}
+
+  .scanrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .scanrow .findlbl{margin-right:auto}
 </style>
 </head>
 <body>
@@ -240,7 +243,13 @@
         <a class="btn small" id="findUG" target="_blank" rel="noopener noreferrer">🎸 Ultimate Guitar</a>
       </div>
     </div>
-    <div class="findlbl" style="margin-bottom:-4px">✎ Chords and lyrics</div>
+    <div class="scanrow">
+      <div class="findlbl">✎ Chords and lyrics</div>
+      <button class="small" id="cleanBtn" title="Remove website header/footer from pasted text">🧹 Clean up</button>
+      <button class="small" id="scanBtn" title="Read chords and lyrics from a photo or screenshot">📷 Scan photo</button>
+      <input type="file" id="scanFile" accept="image/*" multiple style="display:none">
+      <span class="hint" id="scanStatus"></span>
+    </div>
     <textarea id="text" spellcheck="false" placeholder="[Verse 1]&#10;G        D&#10;Paste your chords here..."></textarea>
     <div style="display:flex;gap:8px;justify-content:space-between">
       <button class="danger" id="delSong">Delete song</button>
@@ -567,6 +576,152 @@
   function setSpeed(v){ S.speed=Math.max(1,Math.min(30,v)); $('spVal').textContent=S.speed; save(); }
   $('spUp').onclick=()=>setSpeed(S.speed+1); $('spDown').onclick=()=>setSpeed(S.speed-1);
   $('themeBtn').onclick=()=>{ S.theme=S.theme==='light'?'dark':'light'; save(); renderBar(); };
+
+
+  /* ---------- clean up text pasted from a chord website ---------- */
+  function cleanTabText(raw){
+    const lines=raw.replace(/\r/g,'').split('\n');
+    let start=lines.findIndex(l=>/^\s*\[[^\]]+\]/.test(l));
+    if(start<0) start=lines.findIndex(l=>isChordLine(l)&&l.trim().split(/\s+/).length>=2);
+    if(start<0) start=0;
+    const head=lines.slice(0,start);
+    let body=lines.slice(start);
+    const foot=/^\s*(please rate this tab|related tabs|versions\s*$|what do you think about this tab|all artists\s*$|add to favorites|submit correction|rating\s*:)/i;
+    const end=body.findIndex(l=>foot.test(l));
+    if(end>=0) body=body.slice(0,end);
+    body=body.map(l=>l.replace(/\s+$/,''));
+    while(body.length&&(!body[body.length-1]||/^[A-Za-z]$/.test(body[body.length-1].trim())&&!isChordLine(body[body.length-1]))) body.pop();
+    let out=body.join('\n').replace(/\n{3,}/g,'\n\n');
+    const capo=head.find(l=>/^\s*capo\s*:/i.test(l));
+    if(capo) out=capo.trim()+'\n\n'+out;
+    let title='';
+    for(const l of head){ const m=l.match(/^\s*(.+?)\s+(?:chords|tabs?|ukulele)\s+by\s+/i); if(m){ title=m[1].trim(); break; } }
+    return {text:out,title,changed:start>0||end>=0};
+  }
+  function afterClean(r,msg){
+    const c=cur();
+    if(r.title&&c&&!(c.song.title||'').trim()) setTitle(r.title);
+    $('scanStatus').textContent=msg;
+  }
+  $('cleanBtn').onclick=()=>{
+    const t=$('text'), r=cleanTabText(t.value);
+    if(!r.changed){ $('scanStatus').textContent='Nothing extra found to remove.'; return; }
+    t.value=r.text; t.dispatchEvent(new Event('input'));
+    afterClean(r,'Removed the website header and footer.');
+  };
+  $('text').addEventListener('paste',e=>{
+    const txt=(e.clipboardData||window.clipboardData).getData('text');
+    if(!txt||txt.length<200) return;
+    const r=cleanTabText(txt); if(!r.changed) return;
+    e.preventDefault();
+    const ta=e.target; ta.setRangeText(r.text,ta.selectionStart,ta.selectionEnd,'end');
+    ta.dispatchEvent(new Event('input'));
+    afterClean(r,'Pasted and removed the website header and footer.');
+  });
+
+  /* ---------- scan a photo (OCR in the browser) ---------- */
+  const norm=l=>l.replace(/\s+/g,' ').trim();
+  function median(a){ if(!a.length) return 0; const b=[...a].sort((x,y)=>x-y); return b[Math.floor(b.length/2)]; }
+  // Rebuild monospace text from OCR words using where each word sits in the picture
+  function layoutLines(lines){
+    lines=lines.filter(l=>l.words&&l.words.length).map(l=>({
+      words:l.words.filter(w=>w.text&&w.text.trim()).map(w=>({t:w.text.trim(),x0:w.bbox.x0,x1:w.bbox.x1})),
+      y0:l.bbox.y0,y1:l.bbox.y1
+    })).filter(l=>l.words.length).sort((a,b)=>a.y0-b.y0);
+    if(!lines.length) return [];
+    const cws=[]; lines.forEach(l=>l.words.forEach(w=>{ if(w.t.length>=3) cws.push((w.x1-w.x0)/w.t.length); }));
+    const cw=median(cws)||10;
+    const minX=Math.min(...lines.map(l=>Math.min(...l.words.map(w=>w.x0))));
+    const diffs=[]; for(let i=1;i<lines.length;i++) diffs.push(lines[i].y0-lines[i-1].y0);
+    const pitch=median(diffs.filter(d=>d>0))||(lines[0].y1-lines[0].y0)*1.3;
+    const out=[];
+    lines.forEach((l,i)=>{
+      if(i>0){ const gap=l.y0-lines[i-1].y0; if(gap>pitch*1.7){ const n=Math.min(2,Math.round(gap/pitch)-1); for(let k=0;k<n;k++) out.push(''); } }
+      let str='';
+      l.words.sort((a,b)=>a.x0-b.x0).forEach(w=>{
+        let col=Math.round((w.x0-minX)/cw);
+        if(str.length&&col<=str.length) col=str.length+1;
+        str=str.padEnd(col,' ')+w.t;
+      });
+      out.push(str.replace(/\s+$/,''));
+    });
+    return out;
+  }
+  // Screenshots that overlap (scrolled a bit): drop the repeated lines
+  function mergePages(pages){
+    let acc=pages[0]||[];
+    for(let i=1;i<pages.length;i++){
+      const nxt=pages[i], A=acc.map(norm), B=nxt.map(norm); let cut=0, found=false;
+      for(let k=Math.min(A.length,B.length,60);k>=3&&!found;k--){
+        for(let s0=0;s0<=10&&s0+k<=B.length&&!found;s0++){
+          let miss=0, real=0;
+          for(let j=0;j<k;j++){ if(A[A.length-k+j]!==B[s0+j]) miss++; else if(B[s0+j]) real++; }
+          if(real>=2&&miss<=(k>=6?1:0)){ cut=s0+k; found=true; }
+        }
+      }
+      acc=acc.concat(found?nxt.slice(cut):nxt);
+    }
+    return acc;
+  }
+  async function prepImage(file){
+    const bmp=await createImageBitmap(file);
+    let sc=1; if(bmp.width>2200) sc=2200/bmp.width; else if(bmp.width<1100) sc=1100/bmp.width;
+    const c=document.createElement('canvas'); c.width=Math.round(bmp.width*sc); c.height=Math.round(bmp.height*sc);
+    const x=c.getContext('2d',{willReadFrequently:true}); x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height); x.drawImage(bmp,0,0,c.width,c.height);
+    const im=x.getImageData(0,0,c.width,c.height), d=im.data, n=c.width*c.height, g=new Uint8Array(n), hist=new Uint32Array(256);
+    let sum=0;
+    for(let i=0;i<n;i++){ const v=Math.round(.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2]); g[i]=v; hist[v]++; sum+=v; }
+    const invert=(sum/n)<110;
+    let lo=0,hi=255,acc2=0; for(let v=0;v<256;v++){ acc2+=hist[v]; if(acc2>n*0.02){lo=v;break;} }
+    acc2=0; for(let v=255;v>=0;v--){ acc2+=hist[v]; if(acc2>n*0.02){hi=v;break;} }
+    const span=Math.max(40,hi-lo);
+    for(let i=0;i<n;i++){ let v=(g[i]-lo)*255/span; v=v<0?0:v>255?255:v; if(invert) v=255-v; d[i*4]=d[i*4+1]=d[i*4+2]=v; d[i*4+3]=255; }
+    x.putImageData(im,0,0); return c;
+  }
+  function loadTess(){
+    return new Promise((res,rej)=>{
+      if(window.Tesseract) return res();
+      const sc=document.createElement('script');
+      sc.src='https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js';
+      sc.onload=()=>res(); sc.onerror=()=>rej(new Error('blocked'));
+      document.head.append(sc);
+    });
+  }
+  $('scanBtn').onclick=()=>$('scanFile').click();
+  $('scanFile').onchange=async e=>{
+    const files=[...e.target.files]; e.target.value=''; if(!files.length) return;
+    const st=$('scanStatus'), btn=$('scanBtn'); btn.disabled=true;
+    let worker=null;
+    try{
+      st.textContent='Loading reader (first time needs internet)...';
+      await loadTess();
+      worker=await Tesseract.createWorker('eng',1,{logger:m=>{ if(m.status==='recognizing text') st.textContent='Reading photo '+cur_i+' of '+files.length+'... '+Math.round(m.progress*100)+'%'; else if(m.status&&/load|init/.test(m.status)) st.textContent='Loading reader (first time needs internet)...'; }});
+      await worker.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',user_defined_dpi:'300'});
+      var cur_i=0; const pages=[];
+      for(const f of files){
+        cur_i++; st.textContent='Reading photo '+cur_i+' of '+files.length+'...';
+        const cv=await prepImage(f);
+        const r=await worker.recognize(cv);
+        pages.push(layoutLines(r.data.lines||[]));
+      }
+      const lines=mergePages(pages);
+      const text=lines.join('\n').replace(/\n{3,}/g,'\n\n').replace(/^\n+|\n+$/g,'');
+      if(!text.trim()){ st.textContent='No text found. Try a clearer or closer photo.'; }
+      else{
+        const t=$('text'), old=t.value.replace(/\s+$/,'');
+        t.value=old?old+'\n\n'+text:text;
+        t.dispatchEvent(new Event('input'));
+        st.textContent='Done. Check the text below and fix any mistakes, then tap Done.';
+      }
+    }catch(err){
+      st.textContent=(err&&err.message==='blocked')
+        ?'Scanning needs internet and only works in the downloaded HTML file, not in the Claude preview.'
+        :'Could not read that photo. Try a clearer one.';
+    }finally{
+      btn.disabled=false; try{ if(worker) await worker.terminate(); }catch(_){}
+    }
+  };
+
   /* ---------- zoom: buttons, Fit, pinch ---------- */
   const MINZ=8, MAXZ=64;
   function applySize(v,keepPos){
