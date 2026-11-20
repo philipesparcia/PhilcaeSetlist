@@ -512,13 +512,13 @@
     $('themeBtn').textContent=S.theme==='light'?'☾ Dark':'☀ Light';
   }
   function renderAll(){ renderSide(); renderBar(); renderSheet(); if(editing && cur()) $('text').value=cur().song.text; }
-  function setEdit(on){
-    editing=on&&!!cur(); stopScroll();
+  function setEdit(on,quiet){
+    editing=on&&!!cur(); stopScroll(); S.editing=editing; save();
     $('editwrap').style.display=editing?'flex':'none';
     $('stage').style.display=editing?'none':'block';
     $('editBtn').style.display=editing?'none':'';
     $('play').style.display=editing?'none':'';
-    if(editing){ $('text').value=cur().song.text; $('title2').value=cur().song.title||''; $('findQ').value=cur().song.title||''; updateFind(); $('text').focus(); } else renderSheet();
+    if(editing){ $('text').value=cur().song.text; $('title2').value=cur().song.title||''; $('findQ').value=cur().song.title||''; updateFind(); if(!quiet) $('text').focus(); } else renderSheet();
   }
 
   const stage=$('stage');
@@ -666,7 +666,31 @@
   });
   $('restore').addEventListener('click',()=>{ $('mText').readOnly=false; });
 
-  ensureCur(); renderAll(); setEdit(false);
+  /* ---------- remember exactly where you were (survives closing the app) ---------- */
+  function scrollKey(){ const c=cur(); return curGig().id+'|'+(S.view==='set'?(c?c.set.id:''):S.cur); }
+  function rememberScroll(){
+    if(editing) return;
+    S.scrollKey=scrollKey();
+    S.scrollTopR=stage.scrollHeight?stage.scrollTop/stage.scrollHeight:0;
+    S.scrollLeftR=stage.scrollWidth?stage.scrollLeft/stage.scrollWidth:0;
+    save();
+  }
+  let remT=0;
+  stage.addEventListener('scroll',()=>{ clearTimeout(remT); remT=setTimeout(rememberScroll,250); });
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden){ rememberScroll(); } });
+  window.addEventListener('pagehide',rememberScroll);
+  function restoreScroll(){
+    if(editing||S.scrollKey!==scrollKey()||!stage.clientHeight) return;
+    stage.scrollTop=(S.scrollTopR||0)*stage.scrollHeight;
+    stage.scrollLeft=(S.scrollLeftR||0)*stage.scrollWidth;
+    pos=stage.scrollTop; lastSet=pos;
+  }
+
+  ensureCur(); renderAll(); setEdit(!!S.editing,true);
+  restoreScroll();
+  if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>{ if(!stage.dataset.moved){ fitIfAuto(); restoreScroll(); } });
+  stage.addEventListener('touchstart',()=>{ stage.dataset.moved=1; },{once:true,passive:true});
+  stage.addEventListener('wheel',()=>{ stage.dataset.moved=1; },{once:true,passive:true});
 })();
 </script>
 </body>
