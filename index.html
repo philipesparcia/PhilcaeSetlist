@@ -170,11 +170,14 @@
   .song.drop-after::after{bottom:-2px}
   .addsong.drop-end{border-color:var(--accent);color:var(--accent);border-style:solid}
 
+
   a.btn{display:inline-block;text-decoration:none;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;white-space:nowrap}
   a.btn:hover{background:var(--hover)}
-  a.btn.small{padding:5px 10px;font-size:13px}
-  .findrow input{flex:1 1 180px;min-width:0}
+  a.btn.small{padding:7px 11px;font-size:13px}
+  .findpanel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+  .findlbl{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:700}
   .findrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .findrow input{flex:1 1 180px;min-width:0}
   body.setview #findG{display:none}
 </style>
 </head>
@@ -211,7 +214,7 @@
     <div class="grp tr" title="Transpose"><button class="small" id="tDown">−</button><b id="tVal">0</b><button class="small" id="tUp">+</button><span>key</span></div>
     <div class="grp" title="Text size"><button class="small" id="fDown">A−</button><button class="small" id="fUp">A+</button></div>
     <div class="grp" title="Autoscroll speed"><span>Slow</span><button class="small" id="spDown">−</button><b id="spVal">8</b><button class="small" id="spUp">+</button><span>Fast</span></div>
-    <button id="findG" title="Search for this song's chords">🔍 Find chords</button>
+    <button id="findG" title="Search for this song's chords online">🔍 Find chords</button>
     <button id="viewBtn" title="Show every song in this set, in order">☷ Whole set</button>
     <button id="play">▶ Autoscroll</button>
     <button id="themeBtn" title="Switch light / dark">☀ Light</button>
@@ -222,9 +225,19 @@
 
   <div id="editwrap">
     <div class="hint">Paste your chords and lyrics below, then press <b>Done</b>. Chord lines (like <code>G  D  Em  C</code>) are highlighted automatically.</div>
-    <div class="findrow"><input id="findQ" placeholder="Type the song title to search..." aria-label="Song to search">
-      <a class="btn small" id="findG2" target="_blank" rel="noopener noreferrer">🔍 Google</a>
-      <a class="btn small" id="findUG" target="_blank" rel="noopener noreferrer">🎸 Ultimate Guitar</a></div>
+    <div class="findpanel" style="gap:6px">
+      <div class="findlbl">✎ Song title</div>
+      <input id="title2" placeholder="Song title" aria-label="Song title" style="font-weight:700;font-size:17px">
+    </div>
+    <div class="findpanel">
+      <div class="findlbl">🔍 Search chords online</div>
+      <div class="findrow">
+        <input id="findQ" placeholder="Type a song to search, then tap a button" aria-label="Search term">
+        <a class="btn small" id="findG2" target="_blank" rel="noopener noreferrer">🔍 Google</a>
+        <a class="btn small" id="findUG" target="_blank" rel="noopener noreferrer">🎸 Ultimate Guitar</a>
+      </div>
+    </div>
+    <div class="findlbl" style="margin-bottom:-4px">✎ Chords and lyrics</div>
     <textarea id="text" spellcheck="false" placeholder="[Verse 1]&#10;G        D&#10;Paste your chords here..."></textarea>
     <div style="display:flex;gap:8px;justify-content:space-between">
       <button class="danger" id="delSong">Delete song</button>
@@ -483,7 +496,6 @@
     $('findUG').href='https://www.ultimate-guitar.com/search.php?search_type=title&value='+encodeURIComponent(t);
   }
   function renderBar(){
-    updateFind();
     const c=cur();
     $('title').value=c?c.song.title:''; $('title').disabled=!c;
     const t=c?c.song.transpose||0:0; $('tVal').textContent=(t>0?'+':'')+t;
@@ -502,7 +514,7 @@
     $('stage').style.display=editing?'none':'block';
     $('editBtn').style.display=editing?'none':'';
     $('play').style.display=editing?'none':'';
-    if(editing){ $('text').value=cur().song.text; $('findQ').value=cur().song.title||''; updateFind(); $('text').focus(); } else renderSheet();
+    if(editing){ $('text').value=cur().song.text; $('title2').value=cur().song.title||''; $('findQ').value=cur().song.title||''; updateFind(); $('text').focus(); } else renderSheet();
   }
 
   const stage=$('stage');
@@ -555,10 +567,20 @@
   $('fDown').onclick=()=>{S.size=Math.max(12,S.size-2); renderBar(); save();};
   $('tUp').onclick=()=>shiftT(1); $('tDown').onclick=()=>shiftT(-1);
   function shiftT(d){const c=cur(); if(!c) return; c.song.transpose=Math.max(-11,Math.min(11,(c.song.transpose||0)+d)); save(); renderBar(); renderSheet();}
-  $('title').oninput=e=>{const c=cur(); if(!c) return; c.song.title=e.target.value; save(); renderSide();};
+  function setTitle(v){
+    const c=cur(); if(!c) return;
+    const old=c.song.title||'';
+    c.song.title=v;
+    if($('title').value!==v) $('title').value=v;
+    if($('title2').value!==v) $('title2').value=v;
+    if($('findQ').value===old){ $('findQ').value=v; updateFind(); }
+    save(); renderSide();
+  }
+  $('title').oninput=e=>setTitle(e.target.value);
+  $('title2').oninput=e=>setTitle(e.target.value);
   $('text').oninput=e=>{const c=cur(); if(!c) return; c.song.text=e.target.value; c.song.transpose=0; save();};
   $('findQ').oninput=updateFind;
-  $('findQ').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); if($('findQ').value.trim()) $('findG2').click(); } };
+  $('findQ').onkeydown=e=>{ if(e.key==='Enter') e.preventDefault(); };
   ['findG2','findUG'].forEach(id=>$(id).addEventListener('click',e=>{ if(!$('findQ').value.trim()){ e.preventDefault(); $('findQ').focus(); } }));
   $('findG').onclick=()=>{ if(S.view==='set'){ S.view='song'; save(); renderAll(); } setEdit(true); $('findQ').focus(); $('findQ').select(); };
   $('editBtn').onclick=()=>{ if(S.view==='set'){ S.view='song'; save(); renderAll(); } setEdit(true); };
